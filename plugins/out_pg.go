@@ -21,21 +21,19 @@ type PgOutput struct {
 type PgOutputFactory struct {
 }
 
-func connectDb(databaseUrl string, tableName string) (*sql.DB, error) {
+func (output *PgOutputFactory) connectDb(databaseUrl string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", databaseUrl)
-	if err != nil {
-		return nil, err
-	}
+	return db, err
+}
+
+func (output *PgOutputFactory) createTable(db *sql.DB, tableName string) error {
 	sql := fmt.Sprintf(`CREATE TABLE if not exists %s(
 id bigserial,
 timestamp timestamp,
 tag varchar(255),
 data json) `, tableName)
-	_, err1 := db.Exec(sql)
-	if err1 != nil {
-		return db, err1
-	}
-	return db, err1
+	_, err := db.Exec(sql)
+	return err
 }
 
 func (output *PgOutput) disconnectDb() error {
@@ -65,7 +63,7 @@ func (output *PgOutput) Emit(recordSets []ik.FluentRecordSet) error {
 	if err != nil {
 		logger.Fatal(err)
 		output.disconnectDb()
-		db, err := connectDb(output.databaseUrl, output.tableName)
+		db, err := output.factory.connectDb(output.databaseUrl)
 		if err != nil {
 			return err
 		}
@@ -135,11 +133,17 @@ func (output *PgOutput) Dispose () error {
 }
 
 
-func newPgOutput(factory *PgOutputFactory, databaseUrl string, tableName string, logger *log.Logger) (*PgOutput, error) {
-	logger.Print("PG Connect %s", databaseUrl)
-	db, err := connectDb(databaseUrl, tableName)
+func newPgOutput(factory *PgOutputFactory, databaseUrl string, tableName string, createIfNotExists string, logger *log.Logger) (*PgOutput, error) {
+	logger.Printf("PG Connect %s", databaseUrl)
+	db, err := factory.connectDb(databaseUrl)
+	if createIfNotExists == "true" {
+		logger.Printf("Create table: %s", tableName)
+		err = factory.createTable(db, tableName)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
-		logger.Print("Error")
 		logger.Fatal(err)
 		return nil, err
 	}
@@ -162,7 +166,8 @@ func (factory *PgOutputFactory) BindScorekeeper(scorekeeper *ik.Scorekeeper) {
 func (factory *PgOutputFactory) New(engine ik.Engine, config *ik.ConfigElement) (ik.Output, error) {
 	databaseUrl := config.Attrs["db_url"]
 	tableName := config.Attrs["table_name"]
-	return newPgOutput(factory, databaseUrl, tableName,  engine.Logger())
+	createIfNotExists := config.Attrs["create_if_not_exists"]
+	return newPgOutput(factory, databaseUrl, tableName, createIfNotExists, engine.Logger())
 }
 
 var _ = AddPlugin(&PgOutputFactory{})
